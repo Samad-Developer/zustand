@@ -1,10 +1,31 @@
+'use client'
 
-export default function Home() {
+import TestZustand from "@/component/TestZustand"
+import { usePersonStore } from "@/store/usePersonStore"
+
+// In consuming app
+export default function App() {
+  // "select" the needed state and actions, in this case, the firstName value
+  // and the action updateFirstName
+  const firstName = usePersonStore((state) => state.firstName)
+  const updateFirstName = usePersonStore((state) => state.updateFirstName)
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <h1>Welcome to the zustand!</h1>
-      </main>
-    </div>
-  );
+    <main>
+      <label>
+        First name
+        <input
+          // Update the "firstName" state
+          onChange={(e) => updateFirstName(e.currentTarget.value)}
+          value={firstName}
+        />
+      </label>
+
+      <p>
+        Hello, <strong>{firstName}!</strong>
+      </p>
+
+      <TestZustand/>
+    </main>
+  )
 }
