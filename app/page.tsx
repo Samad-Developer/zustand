@@ -1,31 +1,21 @@
-'use client'
 
-import TestZustand from "@/component/TestZustand"
-import { usePersonStore } from "@/store/usePersonStore"
+import RerenderComp1 from "@/component/RerenderComp1";
+import RerenderComp2 from "@/component/RerenderComp2";
 
-// In consuming app
 export default function App() {
-  // "select" the needed state and actions, in this case, the firstName value
-  // and the action updateFirstName
-  const firstName = usePersonStore((state) => state.firstName)
-  const updateFirstName = usePersonStore((state) => state.updateFirstName)
 
   return (
-    <main>
-      <label>
-        First name
-        <input
-          // Update the "firstName" state
-          onChange={(e) => updateFirstName(e.currentTarget.value)}
-          value={firstName}
-        />
-      </label>
+    <main className="flex flex-col text-black w-full h-screen items-center justify-center">
+ 
+      <h1 className="text-4xl mb-10">
+        Testing Zustand Rerender with useShallow Hook
+      </h1>
 
-      <p>
-        Hello, <strong>{firstName}!</strong>
-      </p>
+      {/* // WITHOUT useShallow — re-renders every time ANY product changes */}
+      <RerenderComp1 />
 
-      <TestZustand/>
+      {/* // WITH useShallow — only re-renders when names actually change */}
+      <RerenderComp2 />
     </main>
-  )
+  );
 }

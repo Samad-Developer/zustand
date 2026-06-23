@@ -53,9 +53,6 @@ npm install zustand
 
 A store in Zustand holds your state AND your actions together in one place.
 
-### Docs definition
-> Call `create` with a function that returns your state and actions.
-
 ### Simple words
 Think of a store like a box. The box holds your data (state) and the functions that change that data (actions). You create it once and use it anywhere in your app.
 
@@ -79,7 +76,6 @@ export default useCartStore
 
 ```tsx
 'use client'
-
 import useCartStore from '@/store/cart-store'
 
 export function CartButton() {
@@ -98,7 +94,7 @@ export function CartButton() {
 
 ### Flat updates (simple)
 
-When your state is not nested inside objects, updating is dead simple.  
+When your state is not nested, updating is dead simple.
 Zustand automatically merges the new value — no need to spread the whole state.
 
 ```ts
@@ -110,12 +106,46 @@ const usePersonStore = create((set) => ({
 }))
 ```
 
-### Nested updates (painful without help)
-
-If your state is nested inside objects, you have to manually copy every level:
+### Direct vs Updater function
 
 ```ts
-// painful way
+// direct value — when you don't need current state
+set({ age: 23 })
+
+// updater function — when you need current state
+set((state) => ({ age: state.age + 1 }))
+```
+
+### Why updater function matters
+
+When you call the same action multiple times rapidly — use updater function to always get the latest value:
+
+```ts
+// ❌ stale — all three read same old value
+setAge(age + 1)
+setAge(age + 1)
+setAge(age + 1)
+
+// ✅ always gets latest value
+setAge((current) => current + 1)
+setAge((current) => current + 1)
+setAge((current) => current + 1)
+```
+
+### replace: true
+
+By default `set` does shallow merge. If you want to completely wipe the store and replace it:
+
+```ts
+set({ age: 30 }, true) // everything else is GONE except age
+```
+
+Only use this when your entire store is a single primitive or array. Never use in normal object stores.
+
+### Nested updates (painful without help)
+
+```ts
+// painful — copy every level manually
 set((state) => ({
   user: {
     ...state.user,
@@ -129,40 +159,26 @@ set((state) => ({
 
 ### Nested updates with Immer (clean way)
 
-Immer lets you write updates as if you're directly changing the value.  
-It handles all the copying behind the scenes.
-
 ```ts
-import { produce } from 'immer'
+import { immer } from 'zustand/middleware/immer'
 
-set(produce((state) => {
-  state.user.address.city = 'Karachi'
-}))
+const useUserStore = create()(
+  immer((set) => ({
+    user: { name: 'Samad', address: { city: 'Peshawar' } },
+    updateCity: (city) => set((state) => {
+      state.user.address.city = city // direct mutation — Immer handles copying
+    }),
+  }))
+)
 ```
 
-> For flat state like a cart items array — you don't need Immer. It's only useful for deeply nested objects.
+> Wrap store with `immer()` once — then mutate directly inside set. Only useful for deeply nested objects.
 
 ---
 
 ## Topic 3 — TypeScript with Zustand
 
-You define the shape of your store using two types — one for state, one for actions.  
-Then pass both into `create<State & Action>()`.
-
-### What is `<>` (Generics)?
-
-Think of it like a function parameter but for types.  
-You're telling Zustand: "hey, my store will look like this shape."
-
-```ts
-// Normal function — you pass a value
-greet("Samad")
-
-// Generic — you pass a type
-create<YourStoreType>()
-```
-
-### Example with TypeScript
+### Basic typed store
 
 ```ts
 import { create } from 'zustand'
@@ -186,77 +202,121 @@ type Action = {
 
 export const useCartStore = create<State & Action>()((set) => ({
   items: [],
-
   addItem: (item) => set((state) => ({ items: [...state.items, item] })),
   removeItem: (id) => set((state) => ({ items: state.items.filter(i => i.id !== id) })),
   clearCart: () => set({ items: [] }),
 }))
 ```
 
-> `State & Action` means combine both types into one so Zustand knows the full shape of your store.
+### Why `create<Type>()()`  — double parentheses?
+
+TypeScript limitation. The extra `()` helps TypeScript infer types correctly inside the store. Just remember the pattern.
+
+### typeof initialState — avoid repeating types
+
+```ts
+const initialState = { bears: 0, food: 'honey' }
+
+type BearState = typeof initialState & {
+  increase: (by: number) => void
+  reset: () => void
+}
+
+const useBearStore = create<BearState>()((set) => ({
+  ...initialState,
+  increase: (by) => set((s) => ({ bears: s.bears + by })),
+  reset: () => set(initialState),
+}))
+```
+
+TypeScript reads the types from `initialState` automatically. If you add a new field — type updates automatically. Zero repetition.
+
+### ExtractState — reuse store type outside
+
+```ts
+import { create, type ExtractState } from 'zustand'
+
+export const useCartStore = create((set) => ({
+  items: [],
+  addItem: (item) => set(...),
+}))
+
+// extract type for use in utility functions, tests, props
+export type CartState = ExtractState<typeof useCartStore>
+```
 
 ---
 
 ## Topic 4 — Actions Outside the Store
 
-### Docs definition
-> Define actions at module level, external to the store. This allows calling them without a hook.
-
 ### Simple words
-Normally you need a hook inside a component to call an action.  
-But sometimes you need to update state from outside React — like a SignalR listener or a utility function.  
-With this pattern you just import the function and call it directly. No hook needed.
+Normally you need a hook inside a component to call an action.
+With this pattern you define actions as plain functions outside the store and call them from anywhere — no hook needed.
 
 ### Example
 
 ```ts
-// store/order-store.ts
+// store/counter-store.ts
 import { create } from 'zustand'
 
-export const useOrderStore = create(() => ({
-  orders: [],
+export const useCounterStore = create(() => ({
+  count: 0,
 }))
 
-// actions live outside the store
-export const addOrder = (order) =>
-  useOrderStore.setState((state) => ({ orders: [...state.orders, order] }))
+// actions outside — plain functions
+export const increment = () =>
+  useCounterStore.setState((state) => ({ count: state.count + 1 }))
 
-export const updateOrderStatus = (id, status) =>
-  useOrderStore.setState((state) => ({
-    orders: state.orders.map(o => o.id === id ? { ...o, status } : o)
-  }))
+export const decrement = () =>
+  useCounterStore.setState((state) => ({ count: state.count - 1 }))
+
+export const reset = () =>
+  useCounterStore.setState({ count: 0 })
 ```
 
-### Real use case — SignalR (outside React)
+### Call from utility function — outside React
 
 ```ts
-// lib/signalr.ts — no component, no hook needed
-import { addOrder, updateOrderStatus } from '@/store/order-store'
+// lib/utils.ts
+import { increment, reset, useCounterStore } from '@/store/counter-store'
 
-connection.on('OrderReceived', (order) => {
-  addOrder(order) // just works
-})
-
-connection.on('OrderStatusChanged', (id, status) => {
-  updateOrderStatus(id, status) // just works
-})
+export const handleLimit = (limit: number) => {
+  const { count } = useCounterStore.getState() // read state outside React
+  if (count >= limit) reset()
+  else increment()
+}
 ```
 
-> This is the biggest practical win over Redux. In Redux you can't call a reducer outside a component. In Zustand you can.
+### In component — read with hook, call actions directly
+
+```tsx
+'use client'
+import { useCounterStore, increment, decrement } from '@/store/counter-store'
+
+export function Counter() {
+  const count = useCounterStore((state) => state.count)
+
+  return (
+    <div>
+      <p>{count}</p>
+      <button onClick={increment}>+</button>
+      <button onClick={decrement}>-</button>
+    </div>
+  )
+}
+```
+
+> This is the biggest win over Redux. In Redux you can't call a reducer outside a component. In Zustand you can.
 
 ---
 
 ## Topic 5 — Slices Pattern
 
-### Docs definition
-> Divide your main store into smaller individual stores to achieve modularity.
-
 ### Simple words
-As your app grows, one store file becomes a mess.  
-Slices let you split each concern into its own file.  
-Then you combine them all into one store at the end.
+As your app grows, one store file becomes a mess.
+Slices let you split each concern into its own file and combine them into one store.
 
-Each slice is not a full store — it's just a function that returns state + actions for one concern.
+Each slice is just a function that returns state + actions for one concern.
 
 ### Folder structure
 
@@ -266,42 +326,24 @@ src/
     ├── cart-slice.ts
     ├── auth-slice.ts
     ├── order-slice.ts
-    └── index.ts        ← combines everything + middleware
+    └── index.ts  ← combines everything + middleware
 ```
 
-### Cart slice
+### Example slices
 
 ```ts
 // store/cart-slice.ts
 export const createCartSlice = (set) => ({
   items: [],
   addItem: (item) => set((state) => ({ items: [...state.items, item] })),
-  removeItem: (id) => set((state) => ({ items: state.items.filter(i => i.id !== id) })),
   clearCart: () => set({ items: [] }),
 })
-```
 
-### Auth slice
-
-```ts
 // store/auth-slice.ts
 export const createAuthSlice = (set) => ({
   user: null,
   setUser: (user) => set({ user }),
   logout: () => set({ user: null }),
-})
-```
-
-### Order slice
-
-```ts
-// store/order-slice.ts
-export const createOrderSlice = (set) => ({
-  orders: [],
-  addOrder: (order) => set((state) => ({ orders: [...state.orders, order] })),
-  updateOrderStatus: (id, status) => set((state) => ({
-    orders: state.orders.map(o => o.id === id ? { ...o, status } : o)
-  })),
 })
 ```
 
@@ -313,67 +355,378 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { createCartSlice } from './cart-slice'
 import { createAuthSlice } from './auth-slice'
-import { createOrderSlice } from './order-slice'
 
 export const useStore = create(
   persist(
     (...a) => ({
       ...createCartSlice(...a),
       ...createAuthSlice(...a),
-      ...createOrderSlice(...a),
     }),
-    { name: 'roll-inn-store' }
+    { name: 'app-store' }
   )
 )
 ```
 
-### What is `(...a)`?
-
-It is shorthand for `(set, get, api)` — the three arguments Zustand passes to every store.  
-Instead of writing them three times, you write `...a` and spread them into each slice.
-
-```ts
-// these two are identical
-(...a) => ({ ...createCartSlice(...a) })
-
-(set, get, api) => ({ ...createCartSlice(set, get, api) })
-```
+`(...a)` is shorthand for `(set, get, api)` — the three arguments Zustand passes to every store.
 
 ### Cross-slice action — one action touching two slices
 
-When one action needs to update state from two different slices, use `get()`:
-
 ```ts
-// store/checkout-slice.ts
 export const createCheckoutSlice = (set, get) => ({
   checkout: () => {
-    const { items, clearCart, addOrder } = get()
+    const { items, clearCart, addOrder } = get() // get() reads entire combined store
     addOrder({ items, date: new Date() })
     clearCart()
   }
 })
 ```
 
-`get()` reads the entire combined store — so you can call actions from other slices.
+### TypeScript slices with StateCreator
 
-### Using the combined store in a component
+```ts
+import { create, StateCreator } from 'zustand'
 
-```tsx
-'use client'
-import { useStore } from '@/store'
+interface CartSlice {
+  items: string[]
+  addItem: (item: string) => void
+}
 
-export function Cart() {
-  const items = useStore((state) => state.items)
-  const user = useStore((state) => state.user)
-  const addItem = useStore((state) => state.addItem)
+interface AuthSlice {
+  user: string | null
+  setUser: (user: string) => void
+}
 
-  return <p>{items.length} items</p>
+const createCartSlice: StateCreator<
+  CartSlice & AuthSlice, // full combined store — so get() works across slices
+  [],                    // always empty
+  [],                    // always empty
+  CartSlice              // this slice only
+> = (set) => ({
+  items: [],
+  addItem: (item) => set((state) => ({ items: [...state.items, item] })),
+})
+```
+
+> ⚠️ Only add middleware in `index.ts`. Never inside individual slices.
+
+---
+
+## Topic 6 — Resetting State
+
+### Approach 1 — initialState object (recommended with TypeScript)
+
+```ts
+const initialState = { bears: 0, food: 'honey' }
+
+type BearState = typeof initialState & {
+  increase: (by: number) => void
+  reset: () => void
+}
+
+const useBearStore = create<BearState>()((set) => ({
+  ...initialState,
+  increase: (by) => set((s) => ({ bears: s.bears + by })),
+  reset: () => set(initialState), // just set back to original object
+}))
+```
+
+### Approach 2 — getInitialState()
+
+```ts
+const useBearStore = create<BearState>()((set, get, store) => ({
+  bears: 0,
+  food: 'honey',
+  increase: (by) => set((s) => ({ bears: s.bears + by })),
+  reset: () => set(store.getInitialState()), // Zustand remembers initial state
+}))
+```
+
+### Why don't actions get reset?
+
+Because `set()` does a **shallow merge** by default. It only updates the keys you pass. Your functions are never touched.
+
+```ts
+// reset() calls set(initialState)
+// initialState = { bears: 0, food: 'honey' }
+// only bears and food reset — increase and reset functions stay untouched
+```
+
+---
+
+## Topic 7 — useShallow
+
+### The problem
+
+When your selector returns an array or object — it creates a new reference every render. Zustand sees a new reference and re-renders even if the content didn't change.
+
+```ts
+// ❌ re-renders every time ANY store state changes
+const names = useProductStore((state) => state.products.map(p => p.name))
+```
+
+### The fix
+
+```ts
+import { useShallow } from 'zustand/react/shallow'
+
+// ✅ only re-renders when names actually change
+const names = useProductStore(
+  useShallow((state) => state.products.map(p => p.name))
+)
+```
+
+### Rule
+
+```
+Selector returns string or number → useShallow NOT needed
+Selector returns array or object  → always wrap with useShallow
+```
+
+### Selecting multiple values
+
+```ts
+// ❌ without useShallow — re-renders on ANY store change
+const { bears, food } = useStore((state) => ({ bears: state.bears, food: state.food }))
+
+// ✅ with useShallow — only re-renders when bears or food change
+const { bears, food } = useStore(
+  useShallow((state) => ({ bears: state.bears, food: state.food }))
+)
+```
+
+> ⚠️ Never do `useStore((state) => state)` — subscribes to entire store, re-renders on everything.
+
+---
+
+## Topic 8 — Auto Generating Selectors
+
+### The problem
+
+Writing selectors for every value is repetitive:
+
+```ts
+const bears = useBearStore((state) => state.bears)
+const increment = useBearStore((state) => state.increment)
+const increase = useBearStore((state) => state.increase)
+```
+
+### The solution — createSelectors utility
+
+Create this once in your project:
+
+```ts
+// lib/createSelectors.ts
+import { StoreApi, UseBoundStore } from 'zustand'
+
+type WithSelectors<S> = S extends { getState: () => infer T }
+  ? S & { use: { [K in keyof T]: () => T[K] } }
+  : never
+
+export const createSelectors = <S extends UseBoundStore<StoreApi<object>>>(
+  _store: S,
+) => {
+  const store = _store as WithSelectors<typeof _store>
+  store.use = {}
+  for (const k of Object.keys(store.getState())) {
+    ;(store.use as any)[k] = () => store((s) => s[k as keyof typeof s])
+  }
+  return store
 }
 ```
 
-One hook. All slices. Clean.
+### Apply to your store
 
-> ⚠️ Only add middleware (`persist`, `devtools`) in `index.ts`. Never inside individual slices.
+```ts
+const useBearStoreBase = create<BearState>()((set) => ({
+  bears: 0,
+  increment: () => set((state) => ({ bears: state.bears + 1 })),
+}))
+
+export const useBearStore = createSelectors(useBearStoreBase)
+```
+
+### Usage — clean and short
+
+```ts
+// before
+const bears = useBearStore((state) => state.bears)
+const increment = useBearStore((state) => state.increment)
+
+// after
+const bears = useBearStore.use.bears()
+const increment = useBearStore.use.increment()
+```
+
+Note: everything becomes a function with `()` — even plain values like `bears`. That's because `createSelectors` wraps everything in a function for consistency.
+
+---
+
+## Topic 9 — subscribe
+
+### Simple words
+
+`subscribe` runs a callback every time state changes — but **without causing a re-render.**
+
+```ts
+// selector in component → state changes → re-render
+// subscribe → state changes → callback runs → NO re-render
+```
+
+### Example
+
+```ts
+useEffect(() => {
+  const stopListening = useSalesStore.subscribe((state) => {
+    chartInstance.update(state.data) // runs on change — no re-render
+  })
+
+  return () => stopListening() // always clean up — avoid memory leak
+}, [])
+```
+
+### When to use
+
+- Logging state changes for debugging
+- Connecting to third party libraries outside React
+- Running side effects without touching the UI
+
+> ⚠️ Always return the cleanup function inside `useEffect` — otherwise you get a memory leak.
+
+---
+
+## Topic 10 — persist Middleware
+
+### Basic usage
+
+```ts
+import { create } from 'zustand'
+import { persist, createJSONStorage } from 'zustand/middleware'
+
+export const useCartStore = create<State & Action>()(
+  persist(
+    (set) => ({
+      items: [],
+      addItem: (item) => set((state) => ({ items: [...state.items, item] })),
+      clearCart: () => set({ items: [] }),
+    }),
+    {
+      name: 'cart-storage', // localStorage key
+      storage: createJSONStorage(() => localStorage), // default — can skip this line
+    }
+  )
+)
+```
+
+### partialize — save only specific fields
+
+```ts
+persist(
+  (set) => ({
+    items: [],
+    isLoading: false, // UI state — don't save this
+    isCartOpen: false, // UI state — don't save this
+  }),
+  {
+    name: 'cart-storage',
+    partialize: (state) => ({ items: state.items }) // only save items
+  }
+)
+```
+
+### version + migrate — handle store structure changes
+
+When you change the shape of your stored state — bump the version and write a migrate function. Existing users' old data gets converted automatically.
+
+```ts
+persist(
+  (set) => ({
+    items: [], // new structure
+  }),
+  {
+    name: 'cart-storage',
+    version: 1, // bump when structure changes
+    migrate: (persistedState: any, version) => {
+      if (version === 0) {
+        // convert old structure to new structure
+        persistedState.items = persistedState.items.map((item) => ({
+          ...item,
+          title: item.name, // rename field
+          price: 0,         // add missing field
+        }))
+      }
+      return persistedState
+    }
+  }
+)
+```
+
+### merge — fix nested object hydration
+
+By default persist does shallow merge when loading from localStorage. Nested object fields can get lost. Fix with deep merge:
+
+```ts
+import createDeepMerge from '@fastify/deepmerge' // npm install @fastify/deepmerge
+const deepMerge = createDeepMerge({ all: true })
+
+persist(
+  (set) => ({ position: { x: 0, y: 0 } }),
+  {
+    name: 'position-storage',
+    merge: (persisted, current) => deepMerge(current, persisted)
+  }
+)
+```
+
+### skipHydration — for Next.js SSR
+
+By default persist auto-loads from localStorage on mount. In Next.js if you get `localStorage is not defined` error — skip hydration and rehydrate manually on the client:
+
+```ts
+persist(
+  (set) => ({ items: [] }),
+  {
+    name: 'cart-storage',
+    skipHydration: true,
+  }
+)
+
+// in your component or layout
+useEffect(() => {
+  useCartStore.persist.rehydrate()
+}, [])
+```
+
+### Custom encrypted storage
+
+```ts
+import CryptoJS from 'crypto-js' // npm install crypto-js
+import { createJSONStorage } from 'zustand/middleware'
+
+const SECRET_KEY = process.env.NEXT_PUBLIC_STORAGE_SECRET!
+
+const encryptedStorage = {
+  getItem: (name: string) => {
+    const encrypted = localStorage.getItem(name)
+    if (!encrypted) return null
+    const decrypted = CryptoJS.AES.decrypt(encrypted, SECRET_KEY)
+    return decrypted.toString(CryptoJS.enc.Utf8)
+  },
+  setItem: (name: string, value: string) => {
+    const encrypted = CryptoJS.AES.encrypt(value, SECRET_KEY).toString()
+    localStorage.setItem(name, encrypted)
+  },
+  removeItem: (name: string) => localStorage.removeItem(name),
+}
+
+// use in store
+persist(
+  (set) => ({ items: [] }),
+  {
+    name: 'cart-storage',
+    storage: createJSONStorage(() => encryptedStorage),
+  }
+)
+```
 
 ---
 
@@ -382,6 +735,10 @@ One hook. All slices. Clean.
 1. Use Zustand only inside `'use client'` components in Next.js
 2. Flat state → `set({ key: value })` — simple
 3. Nested state → use Immer middleware
-4. Actions outside components → use `useStore.setState()` pattern
-5. Big app → use slices pattern, combine in `index.ts`
-6. Middleware → only in the combined store, never in slices
+4. Need current state in action → use updater function `set((state) => ...)`
+5. Selector returns array/object → wrap with `useShallow`
+6. Actions outside components → use `useStore.setState()` pattern
+7. Big app → use slices pattern, combine in `index.ts`
+8. Middleware → only in the combined store, never in slices
+9. Persist → use `partialize` to exclude UI state from localStorage
+10. Store structure changed → bump `version` and write `migrate`
